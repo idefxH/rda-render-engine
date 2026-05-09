@@ -93,8 +93,10 @@ func ProjectWithStage(values map[string]any, mappings *dslmapping.Document, rele
 	// passthrough merge), and making a deep copy here would double the
 	// memory cost on every render.
 	if stage != "" {
+		preProcessWorkloadOverrides(values, stage)
 		applyAppOverrides(values, stage)
 		applyStageOverrides(values, stage)
+		applyWorkloadOverrides(values, stage)
 	}
 	resolveTemplates(values)
 
@@ -473,13 +475,11 @@ func ProjectWithStage(values map[string]any, mappings *dslmapping.Document, rele
 		}
 	}
 
-	// Workload env: block resolution (Phase 1 of DO 0001-A).
-	// Walk suse-library.env, classify each entry as secret-ref or
-	// literal value, write the resolved list to suse-library.env_resolved
-	// for the library chart's deployment.yaml to iterate. Replaces the
-	// per-chart auto-projection of <BINDING>_<KEY> env vars — the dev
-	// now decides explicitly which env vars exist in the pod by
-	// listing them in `suse-library.env:`.
+	// Workloads[] pipeline (DO-0005 Phase 1).
+	// Read workloads[] from suse values, apply per-stage overrides,
+	// resolve shape defaults, resolve env per-workload using shared
+	// bindings, collect sidecars per-workload, and output
+	// workloads_resolved[] in suseOut.
 	secretIdx, secretOverrides := buildBindingSecretIndex(values, mappings)
 	disabledBindings := map[string]bool{}
 	for _, svcRaw := range svcMaps {
@@ -490,12 +490,65 @@ func ProjectWithStage(values map[string]any, mappings *dslmapping.Document, rele
 			disabledBindings[b] = true
 		}
 	}
-	envResolved, err := resolveWorkloadEnv(suse, bindings, secretIdx, secretOverrides, disabledBindings, releaseName)
-	if err != nil {
-		return res, fmt.Errorf("suse-library.%w", err)
+
+	// Resolve workloads: parse, validate, apply shape defaults.
+	workloads, wErr := resolveWorkloads(suse)
+	if wErr != nil {
+		return res, fmt.Errorf("suse-library.%w", wErr)
 	}
-	if len(envResolved) > 0 {
-		suseOut["env_resolved"] = envEntriesToValues(envResolved)
+
+	if len(workloads) > 0 {
+		// Per-workload processing: env resolution + sidecars.
+		workloadsResolved := make([]any, 0, len(workloads))
+		for _, w := range workloads {
+			wName, _ := w["name"].(string)
+
+			// Resolve env block for this workload.
+			wEnv, _ := w["env"].(map[string]any)
+			envResolved, err := resolveWorkloadEnv(wEnv, bindings, secretIdx, secretOverrides, disabledBindings, releaseName)
+			if err != nil {
+				return res, fmt.Errorf("suse-library.workloads[name=%s].%w", wName, err)
+			}
+			if len(envResolved) > 0 {
+				w["env_resolved"] = envEntriesToValues(envResolved)
+			}
+			// Remove the raw env block — it's been resolved.
+			delete(w, "env")
+			// Remove shape — it was used for defaults, not needed in output.
+			delete(w, "shape")
+
+			// Collect sidecars for this workload from services[].
+			if mappings != nil {
+				for _, svcRaw := range servicesRaw {
+					svc, ok := svcRaw.(map[string]any)
+					if !ok {
+						continue
+					}
+					svcBinding, _ := svc["binding"].(string)
+					chartType, _ := svc["type"].(string)
+					if svcBinding == "" || chartType == "" {
+						continue
+					}
+					entry, ok := mappings.Charts[chartType]
+					if !ok || len(entry.Versions) == 0 {
+						continue
+					}
+					ver := entry.Versions[0]
+					// Sidecar target: if inject_target matches workload name,
+					// or no target specified (inject into all workloads).
+					injectTarget, _ := svc["inject_target"].(string)
+					if injectTarget != "" && injectTarget != wName {
+						continue
+					}
+					if err := projectWorkloadSidecars(svc, w, ver, svcBinding); err != nil {
+						return res, err
+					}
+				}
+			}
+
+			workloadsResolved = append(workloadsResolved, w)
+		}
+		suseOut["workloads_resolved"] = workloadsResolved
 	}
 
 	// bootstrap.jobs[] projection: walk services[], collect each entry's

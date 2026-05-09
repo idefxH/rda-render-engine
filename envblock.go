@@ -125,15 +125,14 @@ func buildBindingSecretIndex(values map[string]any, mappings *dslmapping.Documen
 // references unknown binding \"db\"" rather than just "unknown binding
 // \"db\"".
 func resolveWorkloadEnv(
-	suse map[string]any,
+	envRaw map[string]any,
 	bindings map[string]*BindingFields,
 	secretIdx bindingSecretIndex,
 	secretOverrides map[string]string,
 	disabledBindings map[string]bool,
 	releaseName string,
 ) ([]EnvEntry, error) {
-	envRaw, ok := suse["env"].(map[string]any)
-	if !ok || envRaw == nil || len(envRaw) == 0 {
+	if envRaw == nil || len(envRaw) == 0 {
 		return nil, nil
 	}
 	names := make([]string, 0, len(envRaw))

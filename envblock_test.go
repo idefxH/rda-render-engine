@@ -70,6 +70,21 @@ func mkSecretIdx() bindingSecretIndex {
 	}
 }
 
+
+// toEnvMap extracts the "env" sub-map from a suse-library-shaped map.
+// Returns nil when "env" is absent or not a map — matching the nil-safe
+// behaviour of the old resolveWorkloadEnv signature.
+func toEnvMap(suse map[string]any) map[string]any {
+	if suse == nil {
+		return nil
+	}
+	envRaw, ok := suse["env"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	return envRaw
+}
+
 func TestResolveWorkloadEnv_EmptyMissing(t *testing.T) {
 	cases := []struct {
 		name string
@@ -81,7 +96,7 @@ func TestResolveWorkloadEnv_EmptyMissing(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, err := resolveWorkloadEnv(c.suse, mkBindings(), mkSecretIdx(), nil, nil, "demo")
+			got, err := resolveWorkloadEnv(toEnvMap(c.suse), mkBindings(), mkSecretIdx(), nil, nil, "demo")
 			if err != nil {
 				t.Fatalf("expected nil error, got: %v", err)
 			}
@@ -99,7 +114,7 @@ func TestResolveWorkloadEnv_BareRef_SecretKey(t *testing.T) {
 			"DB_PASSWORD": "${binding:db.password}",
 		},
 	}
-	got, err := resolveWorkloadEnv(suse, mkBindings(), mkSecretIdx(), nil, nil, "demo")
+	got, err := resolveWorkloadEnv(toEnvMap(suse), mkBindings(), mkSecretIdx(), nil, nil, "demo")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -127,7 +142,7 @@ func TestResolveWorkloadEnv_BareRef_DerivedField(t *testing.T) {
 			"AUTH_URL": "${binding:auth.url}",
 		},
 	}
-	got, err := resolveWorkloadEnv(suse, mkBindings(), mkSecretIdx(), nil, nil, "demo")
+	got, err := resolveWorkloadEnv(toEnvMap(suse), mkBindings(), mkSecretIdx(), nil, nil, "demo")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -145,7 +160,7 @@ func TestResolveWorkloadEnv_ComposedString(t *testing.T) {
 			"DATABASE_URL": "postgres://${binding:db.username}:${binding:db.password}@${binding:db.host}:${binding:db.port}/${binding:db.database}",
 		},
 	}
-	got, err := resolveWorkloadEnv(suse, mkBindings(), mkSecretIdx(), nil, nil, "demo")
+	got, err := resolveWorkloadEnv(toEnvMap(suse), mkBindings(), mkSecretIdx(), nil, nil, "demo")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -165,7 +180,7 @@ func TestResolveWorkloadEnv_Literal(t *testing.T) {
 			"DEBUG_MODE": "false",
 		},
 	}
-	got, err := resolveWorkloadEnv(suse, mkBindings(), mkSecretIdx(), nil, nil, "demo")
+	got, err := resolveWorkloadEnv(toEnvMap(suse), mkBindings(), mkSecretIdx(), nil, nil, "demo")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -189,7 +204,7 @@ func TestResolveWorkloadEnv_NonStringScalars(t *testing.T) {
 			"NULL_VAR":  nil,
 		},
 	}
-	got, err := resolveWorkloadEnv(suse, mkBindings(), mkSecretIdx(), nil, nil, "demo")
+	got, err := resolveWorkloadEnv(toEnvMap(suse), mkBindings(), mkSecretIdx(), nil, nil, "demo")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -214,7 +229,7 @@ func TestResolveWorkloadEnv_UnknownBinding(t *testing.T) {
 			"FOO": "${binding:nonexistent.host}",
 		},
 	}
-	_, err := resolveWorkloadEnv(suse, mkBindings(), mkSecretIdx(), nil, nil, "demo")
+	_, err := resolveWorkloadEnv(toEnvMap(suse), mkBindings(), mkSecretIdx(), nil, nil, "demo")
 	if err == nil {
 		t.Fatal("expected error for unknown binding, got nil")
 	}
@@ -235,7 +250,7 @@ func TestResolveWorkloadEnv_UnknownField(t *testing.T) {
 			"BAR": "${binding:db.bogus_field}",
 		},
 	}
-	_, err := resolveWorkloadEnv(suse, mkBindings(), mkSecretIdx(), nil, nil, "demo")
+	_, err := resolveWorkloadEnv(toEnvMap(suse), mkBindings(), mkSecretIdx(), nil, nil, "demo")
 	if err == nil {
 		t.Fatal("expected error for unknown field, got nil")
 	}
@@ -252,7 +267,7 @@ func TestResolveWorkloadEnv_OutputSortedByName(t *testing.T) {
 			"M_MID":   "m",
 		},
 	}
-	got, err := resolveWorkloadEnv(suse, mkBindings(), mkSecretIdx(), nil, nil, "demo")
+	got, err := resolveWorkloadEnv(toEnvMap(suse), mkBindings(), mkSecretIdx(), nil, nil, "demo")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -337,7 +352,7 @@ func TestEnvResolvedUsesSecretRefOverride(t *testing.T) {
 	overrides := map[string]string{
 		"db": "shared-pg-credentials",
 	}
-	got, err := resolveWorkloadEnv(suse, mkBindings(), mkSecretIdx(), overrides, nil, "demo")
+	got, err := resolveWorkloadEnv(toEnvMap(suse), mkBindings(), mkSecretIdx(), overrides, nil, "demo")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -370,7 +385,7 @@ func TestEnvResolvedWithoutSecretRefOverride(t *testing.T) {
 			"DB_HOST": "${binding:db.host}",
 		},
 	}
-	got, err := resolveWorkloadEnv(suse, mkBindings(), mkSecretIdx(), nil, nil, "demo")
+	got, err := resolveWorkloadEnv(toEnvMap(suse), mkBindings(), mkSecretIdx(), nil, nil, "demo")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -391,7 +406,7 @@ func TestResolveWorkloadEnv_SecretRefOverride(t *testing.T) {
 	overrides := map[string]string{
 		"db": "shared-pg",
 	}
-	got, err := resolveWorkloadEnv(suse, mkBindings(), mkSecretIdx(), overrides, nil, "demo")
+	got, err := resolveWorkloadEnv(toEnvMap(suse), mkBindings(), mkSecretIdx(), overrides, nil, "demo")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -412,7 +427,7 @@ func TestResolveWorkloadEnv_SecretRefOverride_NoOverride(t *testing.T) {
 			"DB_HOST": "${binding:db.host}",
 		},
 	}
-	got, err := resolveWorkloadEnv(suse, mkBindings(), mkSecretIdx(), nil, nil, "demo")
+	got, err := resolveWorkloadEnv(toEnvMap(suse), mkBindings(), mkSecretIdx(), nil, nil, "demo")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
