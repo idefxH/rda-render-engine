@@ -233,3 +233,125 @@ func deepCopySlice(s []any) []any {
 	}
 	return out
 }
+
+// ─── App-level overrides ─────────────────────────────────────────────
+
+func TestApplyAppOverrides_Staging(t *testing.T) {
+	values := map[string]any{
+		"suse-library": map[string]any{
+			"replicas": 1,
+			"domain":   "localtest.me",
+			"overrides": map[string]any{
+				"staging": map[string]any{
+					"replicas": 2,
+					"domain":   "staging.corp.com",
+				},
+			},
+		},
+	}
+	applyAppOverrides(values, "staging")
+	sl := values["suse-library"].(map[string]any)
+	if sl["replicas"] != 2 {
+		t.Errorf("replicas = %v, want 2", sl["replicas"])
+	}
+	if sl["domain"] != "staging.corp.com" {
+		t.Errorf("domain = %v, want staging.corp.com", sl["domain"])
+	}
+	if _, ok := sl["overrides"]; ok {
+		t.Error("overrides key should be removed")
+	}
+}
+
+func TestApplyAppOverrides_UnknownStage(t *testing.T) {
+	values := map[string]any{
+		"suse-library": map[string]any{
+			"replicas": 1,
+			"overrides": map[string]any{
+				"staging": map[string]any{"replicas": 2},
+			},
+		},
+	}
+	applyAppOverrides(values, "prod")
+	sl := values["suse-library"].(map[string]any)
+	if sl["replicas"] != 1 {
+		t.Errorf("replicas should stay 1 for unknown stage, got %v", sl["replicas"])
+	}
+}
+
+func TestApplyAppOverrides_DeepMerge(t *testing.T) {
+	values := map[string]any{
+		"suse-library": map[string]any{
+			"ingress": map[string]any{
+				"enabled": true,
+				"hosts":   []any{"app.local"},
+			},
+			"overrides": map[string]any{
+				"prod": map[string]any{
+					"ingress": map[string]any{
+						"tls": []any{map[string]any{"secretName": "cert"}},
+					},
+				},
+			},
+		},
+	}
+	applyAppOverrides(values, "prod")
+	ing := values["suse-library"].(map[string]any)["ingress"].(map[string]any)
+	if ing["enabled"] != true {
+		t.Error("deep merge should keep base enabled")
+	}
+	if ing["tls"] == nil {
+		t.Error("deep merge should add overlay tls")
+	}
+}
+
+// ─── Domain template resolution ──────────────────────────────────────
+
+func TestResolveTemplates_Domain(t *testing.T) {
+	values := map[string]any{
+		"suse-library": map[string]any{
+			"domain": "localtest.me",
+			"ingress": map[string]any{
+				"hosts": []any{"app.{{.domain}}"},
+			},
+		},
+	}
+	resolveTemplates(values)
+	hosts := values["suse-library"].(map[string]any)["ingress"].(map[string]any)["hosts"].([]any)
+	if hosts[0] != "app.localtest.me" {
+		t.Errorf("app host = %q, want app.localtest.me", hosts[0])
+	}
+}
+
+func TestResolveTemplates_EmptyDomain(t *testing.T) {
+	values := map[string]any{
+		"suse-library": map[string]any{
+			"domain":  "",
+			"ingress": map[string]any{"hosts": []any{"app.{{.domain}}"}},
+		},
+	}
+	resolveTemplates(values)
+	hosts := values["suse-library"].(map[string]any)["ingress"].(map[string]any)["hosts"].([]any)
+	if hosts[0] != "app.{{.domain}}" {
+		t.Errorf("should be unchanged with empty domain, got %q", hosts[0])
+	}
+}
+
+func TestAppOverridesThenTemplateResolve(t *testing.T) {
+	values := map[string]any{
+		"suse-library": map[string]any{
+			"domain": "localtest.me",
+			"ingress": map[string]any{
+				"hosts": []any{"app.{{.domain}}"},
+			},
+			"overrides": map[string]any{
+				"staging": map[string]any{"domain": "staging.corp.com"},
+			},
+		},
+	}
+	applyAppOverrides(values, "staging")
+	resolveTemplates(values)
+	hosts := values["suse-library"].(map[string]any)["ingress"].(map[string]any)["hosts"].([]any)
+	if hosts[0] != "app.staging.corp.com" {
+		t.Errorf("host = %q, want app.staging.corp.com", hosts[0])
+	}
+}
