@@ -551,6 +551,58 @@ func ProjectWithStage(values map[string]any, mappings *dslmapping.Document, rele
 		suseOut["workloads_resolved"] = workloadsResolved
 	}
 
+	// env_injection_path: for brownfield-helm projects, project env_resolved
+	// entries at a custom path in the overlay so the wrapped chart picks
+	// them up via its own extraEnv/env convention.
+	if injPath, ok := suse["env_injection_path"].(string); ok && injPath != "" {
+		var allEnvEntries []any
+		wResolved, _ := suseOut["workloads_resolved"].([]any)
+		for _, wr := range wResolved {
+			wMap, ok := wr.(map[string]any)
+			if !ok {
+				continue
+			}
+			if envList, ok := wMap["env_resolved"].([]any); ok {
+				allEnvEntries = append(allEnvEntries, envList...)
+			}
+		}
+		if len(allEnvEntries) > 0 {
+			// Convert env_resolved (secretKeyRef format) to plain env format
+			// that most charts understand: [{name: X, value: Y}] or
+			// [{name: X, valueFrom: {secretKeyRef: {name: S, key: K}}}]
+			var helmEnv []any
+			for _, e := range allEnvEntries {
+				entry, ok := e.(map[string]any)
+				if !ok {
+					continue
+				}
+				name, _ := entry["name"].(string)
+				kind, _ := entry["kind"].(string)
+				if kind == "secret" {
+					secretRef, _ := entry["secretRef"].(string)
+					secretKey, _ := entry["secretKey"].(string)
+					helmEnv = append(helmEnv, map[string]any{
+						"name": name,
+						"valueFrom": map[string]any{
+							"secretKeyRef": map[string]any{
+								"name": secretRef,
+								"key":  secretKey,
+							},
+						},
+					})
+				} else {
+					val, _ := entry["value"].(string)
+					helmEnv = append(helmEnv, map[string]any{
+						"name":  name,
+						"value": val,
+					})
+				}
+			}
+			// Write at the injection path in the overlay root
+			setNestedValue(res.Overlay, injPath, helmEnv)
+		}
+	}
+
 	// bootstrap.jobs[] projection: walk services[], collect each entry's
 	// bootstrap.jobs into a flat list under suse-library.bootstrap_jobs.
 	// Cross-binding refs inside the job's env/command/image are resolved
