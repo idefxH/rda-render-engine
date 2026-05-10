@@ -33,6 +33,12 @@ import render "github.com/idefxH/rda-render-engine"
 - **`render.PatchChartDeps(chartYAMLPath, aliases)`** — patch Chart.yaml dependencies with computed aliases.
 - **`render.MaintainInlineComments(valuesPath, values, mappings, releaseName, aliases)`** — maintain derived-value annotations in values.yaml.
 
+## Consumers
+
+This module is imported by:
+- [rda-cli](https://github.com/idefxH/rda-cli) — the developer CLI (`rda render`, `rda export`, `rda lint`, etc.)
+- [helm-rda](https://github.com/idefxH/helm-rda) — the Helm plugin (`helm rda install`, `helm rda template`)
+
 ## Dependencies
 
 - `github.com/Masterminds/semver/v3` — semver constraint matching for version selection
