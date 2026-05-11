@@ -122,10 +122,7 @@ func ProjectWithStage(values map[string]any, mappings *dslmapping.Document, rele
 		return res, nil // no suse-library block — nothing to project
 	}
 
-	servicesRaw, ok := suse["services"].([]any)
-	if !ok || len(servicesRaw) == 0 {
-		return res, nil // empty / absent services[] — nothing to project
-	}
+	servicesRaw, _ := suse["services"].([]any)
 
 	suseOut := map[string]any{}
 
