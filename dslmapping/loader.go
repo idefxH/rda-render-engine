@@ -522,6 +522,15 @@ type CapabilitySpec struct {
 	// List-typed fields use a YAML list of template strings.
 	// When absent, `init` is not available for this capability.
 	Init map[string]any `yaml:"init,omitempty"`
+
+	// WireOffer marks this capability as automatically invokable via
+	// `rda service wire <source> --to <target>`. The value names the
+	// wire type (e.g. "oidc"). When a developer runs `wire auth --to app`,
+	// the CLI looks up capabilities with a matching WireOffer on the
+	// source chart and runs the Init template with the target's context.
+	// When a chart has multiple capabilities with different WireOffer
+	// values, the user disambiguates with `--as <type>`.
+	WireOffer string `yaml:"wire_offer,omitempty"`
 }
 
 // BackendType is the string-typed enum for CapabilitySpec.Backend.
@@ -687,6 +696,14 @@ type DependencySpec struct {
 	//   "externalDatabase.host":    "__host__"
 	//   "externalDatabase.port":    "__port__"
 	Wiring map[string]string `yaml:"wiring,omitempty"`
+
+	// WireType identifies the kind of cross-binding wiring this dependency
+	// represents. Used by `rda service wire` to dispatch the correct
+	// action (bootstrap client, inject env vars, etc.). Known values:
+	//   "oidc" — bootstrap an OIDC client on the provider, wire credentials
+	// When empty, the dependency uses standard value-projection wiring
+	// (the DO-0004 Phase 1 behavior).
+	WireType string `yaml:"wire_type,omitempty"`
 
 	// CompatibleVersions is a semver constraint for the dependency chart.
 	// When set, the opportunity comment shows BLOCKED if the existing

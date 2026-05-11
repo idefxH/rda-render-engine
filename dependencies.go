@@ -113,8 +113,20 @@ func projectDependencies(
 						}
 						val = refBF.Port
 					}
+				case sourcePath == "__url__":
+					if refBF != nil {
+						val = refBF.URL
+					}
 				case strings.HasPrefix(sourcePath, "__literal:"):
 					val = strings.TrimPrefix(sourcePath, "__literal:")
+				case strings.HasPrefix(sourcePath, "__bootstrap:"):
+					trimmed := strings.TrimPrefix(sourcePath, "__bootstrap:")
+					parts := strings.SplitN(trimmed, ".", 2)
+					if len(parts) == 2 && refBF != nil {
+						capName := parts[0]
+						fieldName := strings.TrimSuffix(parts[1], "__")
+						val = resolveBootstrapField(refSvc, capName, binding, fieldName)
+					}
 				default:
 					// When the ref binding uses secretRef, prefer the resolved
 					// BindingFields (from kubectl) over DSL scaffold defaults.
@@ -308,5 +320,43 @@ func lastSegment(path string) string {
 		return path[idx+1:]
 	}
 	return path
+}
+
+// resolveBootstrapField finds a bootstrap item matching the consumer
+// binding and returns the requested field value. Used by the
+// __bootstrap:auth.clients.id__ sentinel to resolve auto-bootstrapped
+// OIDC client credentials at render time.
+func resolveBootstrapField(svc map[string]any, capName, consumerBinding, fieldName string) string {
+	bs, ok := svc["bootstrap"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	items, ok := bs[capName].([]any)
+	if !ok {
+		return ""
+	}
+	// First pass: find item whose name/id matches the consumer binding
+	for _, itemRaw := range items {
+		item, ok := itemRaw.(map[string]any)
+		if !ok {
+			continue
+		}
+		name, _ := item["name"].(string)
+		id, _ := item["id"].(string)
+		if name == consumerBinding || id == consumerBinding+"-client" || id == consumerBinding {
+			if v, ok := item[fieldName]; ok {
+				return fmt.Sprintf("%v", v)
+			}
+		}
+	}
+	// Fallback: return field from the first item
+	if len(items) > 0 {
+		if item, ok := items[0].(map[string]any); ok {
+			if v, ok := item[fieldName]; ok {
+				return fmt.Sprintf("%v", v)
+			}
+		}
+	}
+	return ""
 }
 
