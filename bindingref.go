@@ -425,6 +425,10 @@ func collectBindings(values map[string]any, mappings *dslmapping.Document, relea
 		if len(ver.BindingSecret) > 0 {
 			bf.Secret = renderBindingSecretValues(ver.BindingSecret, svc, releaseName, binding, chartType)
 		}
+		if bf.Secret == nil {
+			bf.Secret = map[string]string{}
+		}
+		composeConnectionURLs(bf, chartType)
 		out[binding] = bf
 	}
 	return out
@@ -515,6 +519,31 @@ func renderBindingSecretValues(specs []dslmapping.BindingSecretEntry, svc map[st
 		}
 	}
 	return out
+}
+
+// composeConnectionURLs adds connection_url and jdbc_url to the Secret
+// map for database-type charts. Mirrors what _helpers.tpl emits (lines
+// 630-638) so ${binding:db.connection_url} works in the render engine.
+func composeConnectionURLs(bf *BindingFields, chartType string) {
+	host := bf.Host
+	if strings.Contains(host, ".svc.cluster.local") {
+		host = host[:strings.Index(host, ".")]
+	}
+	switch chartType {
+	case "postgresql":
+		bf.Secret["connection_url"] = fmt.Sprintf("postgresql://%s:%s@%s:%s/%s",
+			bf.Username, bf.Password, host, bf.Port, bf.Database)
+		bf.Secret["jdbc_url"] = fmt.Sprintf("jdbc:postgresql://%s:%s/%s",
+			host, bf.Port, bf.Database)
+	case "mariadb":
+		bf.Secret["connection_url"] = fmt.Sprintf("mysql://%s:%s@%s:%s/%s",
+			bf.Username, bf.Password, host, bf.Port, bf.Database)
+		bf.Secret["jdbc_url"] = fmt.Sprintf("jdbc:mariadb://%s:%s/%s",
+			host, bf.Port, bf.Database)
+	case "redis", "valkey":
+		bf.Secret["connection_url"] = fmt.Sprintf("redis://:%s@%s:%s/0",
+			bf.Password, host, bf.Port)
+	}
 }
 
 // renderHostTemplate substitutes {{.Release.Name}} in the catalogue's
