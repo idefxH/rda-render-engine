@@ -117,6 +117,14 @@ func projectDependencies(
 					if refBF != nil {
 						val = refBF.URL
 					}
+				case strings.HasPrefix(sourcePath, "__binding:"):
+					fieldName := strings.TrimPrefix(sourcePath, "__binding:")
+					fieldName = strings.TrimSuffix(fieldName, "__")
+					if refBF != nil {
+						if resolved, err := refBF.Get(fieldName); err == nil {
+							val = resolved
+						}
+					}
 				case strings.HasPrefix(sourcePath, "__literal:"):
 					val = strings.TrimPrefix(sourcePath, "__literal:")
 				case strings.HasPrefix(sourcePath, "__bootstrap:"):
