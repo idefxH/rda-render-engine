@@ -315,12 +315,14 @@ func ProjectWithStage(values map[string]any, mappings *dslmapping.Document, rele
 				return res, fmt.Errorf("derived_values[%s] target=%s parse: %w",
 					chartType, dv.Target, err)
 			}
+			domain, _ := suse["domain"].(string)
 			input := map[string]any{
 				"Service":    svc,
 				"Release":    map[string]any{"Name": releaseName},
 				"Binding":    binding,
 				"Type":       chartType,
 				"ChartAlias": chartAlias,
+				"Domain":     domain,
 			}
 			var buf strings.Builder
 			if err := tpl.Execute(&buf, input); err != nil {
