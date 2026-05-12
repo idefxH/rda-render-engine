@@ -271,6 +271,59 @@ func TestSourceFilteringSelectsCorrectVersion(t *testing.T) {
 	SetChartSource("")
 }
 
+// TestDisabledParentSkipsChildProjection verifies that when
+// persistence.enabled=false, persistence.size is NOT projected.
+func TestDisabledParentSkipsChildProjection(t *testing.T) {
+	values := map[string]any{
+		"suse-library": map[string]any{
+			"services": []any{
+				map[string]any{
+					"binding": "db",
+					"type":    "postgresql",
+					"enabled": true,
+					"persistence": map[string]any{
+						"enabled": false,
+						"size":    "1Gi",
+					},
+				},
+			},
+		},
+	}
+	mappings := &dslmapping.Document{
+		Charts: map[string]dslmapping.ChartEntry{
+			"postgresql": {
+				Versions: []dslmapping.VersionEntry{{
+					Constraint: ">=0.1.0",
+					Service:    dslmapping.ServiceSpec{Host: "{{ .Release.Name }}-postgresql", Port: 5432},
+					ValuesMapping: map[string]string{
+						"persistence.enabled": "postgresql.persistence.enabled",
+						"persistence.size":    "postgresql.persistence.resources.requests.storage",
+					},
+				}},
+			},
+		},
+	}
+
+	result, err := ProjectWithStage(values, mappings, "test", "")
+	if err != nil {
+		t.Fatalf("projection failed: %v", err)
+	}
+
+	sl, _ := result.Overlay["suse-library"].(map[string]any)
+	pg, _ := sl["postgresql"].(map[string]any)
+	pers, _ := pg["persistence"].(map[string]any)
+
+	// persistence.enabled should be projected (it's the parent flag itself)
+	if pers["enabled"] != false {
+		t.Errorf("persistence.enabled should be false, got %v", pers["enabled"])
+	}
+
+	// persistence.resources should NOT exist (size skipped because enabled=false)
+	if _, ok := pers["resources"]; ok {
+		t.Errorf("persistence.resources should not be projected when persistence.enabled=false, got %v", pers["resources"])
+	}
+}
+
 // TestConnectionURLComposed verifies that postgresql bindings
 // auto-compose connection_url from individual fields.
 func TestConnectionURLComposed(t *testing.T) {

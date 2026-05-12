@@ -248,6 +248,20 @@ func ProjectWithStage(values map[string]any, mappings *dslmapping.Document, rele
 			if !found {
 				continue
 			}
+			// Skip child fields of disabled parents. When
+			// persistence.enabled=false, don't project persistence.size
+			// — the chart template may create volumeMounts for values
+			// that exist even when persistence is off.
+			if parent, _, ok := strings.Cut(dslPath, "."); ok {
+				if parent != dslPath {
+					enabledVal, enabledFound := digDSL(svc, parent+".enabled")
+					if enabledFound && (enabledVal == false || enabledVal == "false") {
+						if dslPath != parent+".enabled" {
+							continue
+						}
+					}
+				}
+			}
 			if err := setAtPath(suseOut, valuesPath, val); err != nil {
 				return res, fmt.Errorf("services[binding=%s].%s -> %s: %w",
 					binding, dslPath, valuesPath, err)
