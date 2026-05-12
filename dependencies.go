@@ -166,6 +166,7 @@ func projectDependencies(
 					// written (by passthrough or stage overrides), don't
 					// overwrite it. This lets dev overrides beat wiring.
 					if existing := getAtPath(suseOut, aliasedTarget); existing != nil {
+						trace("phase2", binding, "wiring SKIP", fmt.Sprintf("%s (existing=%v, would-be=%v)", aliasedTarget, existing, val))
 						continue
 					}
 					if err := setAtPath(suseOut, aliasedTarget, val); err != nil {

@@ -93,12 +93,18 @@ func ProjectWithStage(values map[string]any, mappings *dslmapping.Document, rele
 	// passthrough merge), and making a deep copy here would double the
 	// memory cost on every render.
 	if stage != "" {
+		trace("phase0", "", "applyStageOverrides", fmt.Sprintf("stage=%s", stage))
 		preProcessWorkloadOverrides(values, stage)
 		applyAppOverrides(values, stage)
 		applyStageOverrides(values, stage)
 		applyWorkloadOverrides(values, stage)
 	}
 	resolveTemplates(values)
+	if suse, ok := values["suse-library"].(map[string]any); ok {
+		if d, ok := suse["domain"].(string); ok && d != "" {
+			trace("phase0", "", "resolveTemplates", fmt.Sprintf("domain=%s", d))
+		}
+	}
 
 	res := Result{Overlay: map[string]any{}}
 
@@ -107,6 +113,7 @@ func ProjectWithStage(values map[string]any, mappings *dslmapping.Document, rele
 	// values that contain ${binding:...} references. Empty when no
 	// services[] / no mappings — refs at projection time then fail loud.
 	bindings := collectBindings(values, mappings, releaseName)
+	trace("phase1", "", "collectBindings", fmt.Sprintf("%d binding(s)", len(bindings)))
 	_ = bindings // kept for use below
 
 	if mappings == nil {
