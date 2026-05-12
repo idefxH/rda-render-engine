@@ -5,6 +5,25 @@ import (
 	"io"
 )
 
+// chartSource is the active chart source ("appco" or "community").
+// Empty means "appco" (backwards compatible). Set via SetChartSource.
+var chartSource string
+
+// SetChartSource configures the chart source for version selection.
+// "appco" (default) uses SUSE Application Collection charts.
+// "community" uses upstream/Bitnami charts.
+func SetChartSource(source string) {
+	chartSource = source
+}
+
+// ChartSource returns the active chart source.
+func ChartSource() string {
+	if chartSource == "" {
+		return "appco"
+	}
+	return chartSource
+}
+
 // TraceFunc is called at each projection step when tracing is enabled.
 // phase is "phase0", "phase1", or "phase2".
 // binding is the service binding name (empty for global phases).

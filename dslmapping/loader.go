@@ -40,15 +40,29 @@ type BranchEntry struct {
 	ChartVersion string `yaml:"chart_version"`
 }
 
+// ChartSourceSpec describes a chart's OCI reference and image
+// pull requirements for a given source (appco or community).
+type ChartSourceSpec struct {
+	ChartRef          string `yaml:"chart_ref"`
+	ChartVersion      string `yaml:"chart_version"`
+	RequiresPullSecret bool  `yaml:"requires_pull_secret,omitempty"`
+}
+
 type ChartEntry struct {
-	DefaultBranch string                 `yaml:"default_branch,omitempty"`
-	Branches      map[string]BranchEntry `yaml:"branches,omitempty"`
-	Versions      []VersionEntry         `yaml:"versions"`
+	DefaultBranch string                        `yaml:"default_branch,omitempty"`
+	Branches      map[string]BranchEntry        `yaml:"branches,omitempty"`
+	Sources       map[string]ChartSourceSpec     `yaml:"sources,omitempty"`
+	Versions      []VersionEntry                `yaml:"versions"`
 }
 
 // VersionEntry is one constraint-matched mapping block.
 type VersionEntry struct {
 	Constraint    string               `yaml:"constraint"`
+	// Source limits this version entry to a specific chart source
+	// ("appco" or "community"). Empty means the entry applies to
+	// all sources — used when the chart schema is identical between
+	// AppCo and upstream.
+	Source        string               `yaml:"source,omitempty"`
 	Service       ServiceSpec          `yaml:"service"`
 	ValuesMapping map[string]string    `yaml:"values_mapping"`
 	BindingSecret []BindingSecretEntry `yaml:"binding_secret"`

@@ -194,6 +194,83 @@ func TestDerivedValuesHaveDomain(t *testing.T) {
 	}
 }
 
+// TestSourceFilteringSelectsCorrectVersion verifies that version
+// entries with source="community" are only used when ChartSource is
+// community, and source="" entries work for all sources.
+func TestSourceFilteringSelectsCorrectVersion(t *testing.T) {
+	values := map[string]any{
+		"suse-library": map[string]any{
+			"services": []any{
+				map[string]any{
+					"binding": "db",
+					"type":    "postgresql",
+					"enabled": true,
+					"auth": map[string]any{
+						"user": map[string]any{
+							"name": "app", "password": "dev", "database": "test",
+						},
+						"admin": map[string]any{"password": "admin"},
+					},
+				},
+			},
+		},
+	}
+
+	mappings := &dslmapping.Document{
+		Charts: map[string]dslmapping.ChartEntry{
+			"postgresql": {
+				Versions: []dslmapping.VersionEntry{
+					{
+						Constraint: ">=0.1.0",
+						Source:     "appco",
+						Service:    dslmapping.ServiceSpec{Host: "{{ .Release.Name }}-postgresql", Port: 5432},
+						ValuesMapping: map[string]string{
+							"resources.requests.cpu": "postgresql.podTemplates.containers.postgresql.resources.requests.cpu",
+						},
+					},
+					{
+						Constraint: ">=16.0.0",
+						Source:     "community",
+						Service:    dslmapping.ServiceSpec{Host: "{{ .Release.Name }}-postgresql", Port: 5432},
+						ValuesMapping: map[string]string{
+							"resources.requests.cpu": "postgresql.primary.resources.requests.cpu",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Test with appco source
+	SetChartSource("appco")
+	result, err := ProjectWithStage(values, mappings, "test", "")
+	if err != nil {
+		t.Fatalf("appco projection failed: %v", err)
+	}
+	sl, _ := result.Overlay["suse-library"].(map[string]any)
+	pg, _ := sl["postgresql"].(map[string]any)
+	// Should NOT have primary.resources (that's community)
+	if _, ok := pg["primary"]; ok {
+		t.Error("appco source should not produce primary.resources path")
+	}
+
+	// Test with community source
+	SetChartSource("community")
+	result2, err := ProjectWithStage(values, mappings, "test", "")
+	if err != nil {
+		t.Fatalf("community projection failed: %v", err)
+	}
+	sl2, _ := result2.Overlay["suse-library"].(map[string]any)
+	pg2, _ := sl2["postgresql"].(map[string]any)
+	// Should NOT have podTemplates (that's appco)
+	if _, ok := pg2["podTemplates"]; ok {
+		t.Error("community source should not produce podTemplates path")
+	}
+
+	// Reset
+	SetChartSource("")
+}
+
 // TestConnectionURLComposed verifies that postgresql bindings
 // auto-compose connection_url from individual fields.
 func TestConnectionURLComposed(t *testing.T) {

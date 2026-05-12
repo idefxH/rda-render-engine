@@ -687,6 +687,19 @@ func selectVersion(entry dslmapping.ChartEntry, svc map[string]any) dslmapping.V
 	if len(entry.Versions) == 0 {
 		return dslmapping.VersionEntry{}
 	}
+	// Filter versions by chart source. Entries with empty Source match
+	// all sources (schema-compatible charts). Entries with a specific
+	// Source only match when that source is active.
+	source := ChartSource()
+	filtered := make([]dslmapping.VersionEntry, 0, len(entry.Versions))
+	for _, v := range entry.Versions {
+		if v.Source == "" || v.Source == source {
+			filtered = append(filtered, v)
+		}
+	}
+	if len(filtered) == 0 {
+		return entry.Versions[0] // fallback to first entry
+	}
 	branch, _ := svc["branch"].(string)
 	if branch == "" {
 		if n, ok := svc["branch"].(int); ok {
@@ -707,7 +720,7 @@ func selectVersion(entry dslmapping.ChartEntry, svc map[string]any) dslmapping.V
 			}
 			chartVer, err := semver.NewVersion(raw)
 			if err == nil {
-				for _, v := range entry.Versions {
+				for _, v := range filtered {
 					c, err := semver.NewConstraint(v.Constraint)
 					if err != nil {
 						continue
@@ -719,7 +732,7 @@ func selectVersion(entry dslmapping.ChartEntry, svc map[string]any) dslmapping.V
 			}
 		}
 	}
-	return entry.Versions[0]
+	return filtered[0]
 }
 
 // digDSL walks a nested map by a dotted path. Returns the leaf value and true
