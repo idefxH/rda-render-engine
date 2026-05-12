@@ -530,7 +530,7 @@ func composeConnectionURLs(bf *BindingFields, chartType string) {
 		host = host[:strings.Index(host, ".")]
 	}
 	switch chartType {
-	case "postgresql":
+	case "postgresql", "cnpg":
 		bf.Secret["connection_url"] = fmt.Sprintf("postgresql://%s:%s@%s:%s/%s",
 			bf.Username, bf.Password, host, bf.Port, bf.Database)
 		bf.Secret["jdbc_url"] = fmt.Sprintf("jdbc:postgresql://%s:%s/%s",
