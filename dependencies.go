@@ -162,6 +162,12 @@ func projectDependencies(
 					}
 				}
 				if val != "" {
+					// Passthrough wins: if the target path was already
+					// written (by passthrough or stage overrides), don't
+					// overwrite it. This lets dev overrides beat wiring.
+					if existing := getAtPath(suseOut, aliasedTarget); existing != nil {
+						continue
+					}
 					if err := setAtPath(suseOut, aliasedTarget, val); err != nil {
 						return fmt.Errorf("dependency wiring %s.%s -> %s: %w",
 							binding, dep.DSLField, aliasedTarget, err)

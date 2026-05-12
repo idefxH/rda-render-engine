@@ -765,6 +765,25 @@ func digDSL(m map[string]any, dottedPath string) (any, bool) {
 // (would have to overwrite to descend), when a list is shorter than the
 // asked index AND the path needs to descend further (vs append at the
 // leaf, which is fine), or when the bracket spec is malformed.
+func getAtPath(m map[string]any, dottedPath string) any {
+	keys := strings.Split(dottedPath, ".")
+	cur := m
+	for _, k := range keys[:len(keys)-1] {
+		seg, _, _, _ := parsePathSegment(k)
+		next, ok := cur[seg]
+		if !ok {
+			return nil
+		}
+		nm, ok := next.(map[string]any)
+		if !ok {
+			return nil
+		}
+		cur = nm
+	}
+	last, _, _, _ := parsePathSegment(keys[len(keys)-1])
+	return cur[last]
+}
+
 func setAtPath(m map[string]any, dottedPath string, value any) error {
 	keys := strings.Split(dottedPath, ".")
 	if len(keys) == 0 {
