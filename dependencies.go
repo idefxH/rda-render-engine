@@ -113,9 +113,11 @@ func projectDependencies(
 						}
 						val = refBF.Port
 					}
-				case sourcePath == "__url__":
+				case strings.HasPrefix(sourcePath, "__url__"):
+					// Supports __url__ alone or __url__/suffix (e.g. __url__/token)
 					if refBF != nil {
-						val = refBF.URL
+						suffix := strings.TrimPrefix(sourcePath, "__url__")
+						val = refBF.URL + suffix
 					}
 				case strings.HasPrefix(sourcePath, "__binding:"):
 					// Syntax: __binding:FIELD__ or __binding:FIELD__/suffix
