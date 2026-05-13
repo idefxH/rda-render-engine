@@ -118,23 +118,30 @@ func projectDependencies(
 						val = refBF.URL
 					}
 				case strings.HasPrefix(sourcePath, "__binding:"):
-					fieldName := strings.TrimPrefix(sourcePath, "__binding:")
-					fieldName = strings.TrimSuffix(fieldName, "__")
-					if refBF != nil {
-						if resolved, err := refBF.Get(fieldName); err == nil {
-							val = resolved
+					// Syntax: __binding:FIELD__ or __binding:FIELD__/suffix
+					// Find the closing __ to extract the field name; anything
+					// after it is appended verbatim to the resolved value.
+					rest := strings.TrimPrefix(sourcePath, "__binding:")
+					endIdx := strings.Index(rest, "__")
+					if endIdx >= 0 {
+						fieldName := rest[:endIdx]
+						suffix := rest[endIdx+2:]
+						if refBF != nil {
+							if resolved, err := refBF.Get(fieldName); err == nil {
+								val = resolved + suffix
+							}
 						}
 					}
 				case strings.HasPrefix(sourcePath, "__literal:"):
 					val = strings.TrimPrefix(sourcePath, "__literal:")
 				case strings.HasPrefix(sourcePath, "__bootstrap:"):
-					trimmed := strings.TrimPrefix(sourcePath, "__bootstrap:")
-					parts := strings.SplitN(trimmed, ".", 2)
-					if len(parts) == 2 && refBF != nil {
-						capName := parts[0]
-						fieldName := strings.TrimSuffix(parts[1], "__")
-						val = resolveBootstrapField(refSvc, capName, binding, fieldName)
-					}
+					// Syntax: __bootstrap:KEY.FIELD__ where KEY is the bootstrap
+					// map key in the provider service (e.g. "auth.clients") and
+					// FIELD is the item field (e.g. "id", "secret"). The consumer
+					// binding name is used to find the matching item.
+					bootstrapPath := strings.TrimPrefix(sourcePath, "__bootstrap:")
+					bootstrapPath = strings.TrimSuffix(bootstrapPath, "__")
+					val = resolveBootstrapPath(refSvc, bootstrapPath, binding)
 				default:
 					// When the ref binding uses secretRef, prefer the resolved
 					// BindingFields (from kubectl) over DSL scaffold defaults.
@@ -337,41 +344,54 @@ func lastSegment(path string) string {
 	return path
 }
 
-// resolveBootstrapField finds a bootstrap item matching the consumer
-// binding and returns the requested field value. Used by the
-// __bootstrap:auth.clients.id__ sentinel to resolve auto-bootstrapped
-// OIDC client credentials at render time.
-func resolveBootstrapField(svc map[string]any, capName, consumerBinding, fieldName string) string {
+// resolveBootstrapPath resolves a __bootstrap:KEY.FIELD__ sentinel.
+// path is "KEY.FIELD" (e.g. "auth.clients.id"). It scans the provider
+// service's bootstrap map for a key that is a dot-prefix of path, uses
+// the remainder as the item field name, and matches by consumer binding.
+func resolveBootstrapPath(svc map[string]any, path, consumerBinding string) string {
 	bs, ok := svc["bootstrap"].(map[string]any)
 	if !ok {
 		return ""
 	}
-	items, ok := bs[capName].([]any)
-	if !ok {
-		return ""
-	}
-	// First pass: find item whose name/id matches the consumer binding
-	for _, itemRaw := range items {
-		item, ok := itemRaw.(map[string]any)
+	for key, itemsRaw := range bs {
+		prefix := key + "."
+		if !strings.HasPrefix(path, prefix) {
+			continue
+		}
+		fieldName := path[len(prefix):]
+		items, ok := itemsRaw.([]any)
 		if !ok {
 			continue
 		}
-		name, _ := item["name"].(string)
-		id, _ := item["id"].(string)
-		if name == consumerBinding || id == consumerBinding+"-client" || id == consumerBinding {
-			if v, ok := item[fieldName]; ok {
-				return fmt.Sprintf("%v", v)
+		// First pass: find item matching the consumer binding
+		for _, itemRaw := range items {
+			item, ok := itemRaw.(map[string]any)
+			if !ok {
+				continue
+			}
+			name, _ := item["name"].(string)
+			id, _ := item["id"].(string)
+			if name == consumerBinding || id == consumerBinding+"-client" || id == consumerBinding {
+				if v, ok := item[fieldName]; ok {
+					return fmt.Sprintf("%v", v)
+				}
 			}
 		}
-	}
-	// Fallback: return field from the first item
-	if len(items) > 0 {
-		if item, ok := items[0].(map[string]any); ok {
-			if v, ok := item[fieldName]; ok {
-				return fmt.Sprintf("%v", v)
+		// Fallback: field from the first item
+		if len(items) > 0 {
+			if item, ok := items[0].(map[string]any); ok {
+				if v, ok := item[fieldName]; ok {
+					return fmt.Sprintf("%v", v)
+				}
 			}
 		}
 	}
 	return ""
+}
+
+// resolveBootstrapField is retained for any direct callers outside the
+// wiring switch. New code should use resolveBootstrapPath.
+func resolveBootstrapField(svc map[string]any, capName, consumerBinding, fieldName string) string {
+	return resolveBootstrapPath(svc, capName+"."+fieldName, consumerBinding)
 }
 
