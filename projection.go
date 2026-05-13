@@ -337,13 +337,18 @@ func ProjectWithStage(values map[string]any, mappings *dslmapping.Document, rele
 					chartType, dv.Target, err)
 			}
 			domain, _ := suse["domain"].(string)
+			svcSource, _ := svc["source"].(string)
+			if svcSource == "" {
+				svcSource = ChartSource()
+			}
 			input := map[string]any{
-				"Service":    svc,
-				"Release":    map[string]any{"Name": releaseName},
-				"Binding":    binding,
-				"Type":       chartType,
-				"ChartAlias": chartAlias,
-				"Domain":     domain,
+				"Service":     svc,
+				"Release":     map[string]any{"Name": releaseName},
+				"Binding":     binding,
+				"Type":        chartType,
+				"ChartAlias":  chartAlias,
+				"Domain":      domain,
+				"ChartSource": svcSource,
 			}
 			var buf strings.Builder
 			if err := tpl.Execute(&buf, input); err != nil {
@@ -701,10 +706,13 @@ func selectVersion(entry dslmapping.ChartEntry, svc map[string]any) dslmapping.V
 	if len(entry.Versions) == 0 {
 		return dslmapping.VersionEntry{}
 	}
-	// Filter versions by chart source. Entries with empty Source match
-	// all sources (schema-compatible charts). Entries with a specific
-	// Source only match when that source is active.
-	source := ChartSource()
+	// Filter versions by chart source. Per-service source overrides
+	// the global ChartSource(). Entries with empty Source match all
+	// sources (schema-compatible charts).
+	source, _ := svc["source"].(string)
+	if source == "" {
+		source = ChartSource()
+	}
 	filtered := make([]dslmapping.VersionEntry, 0, len(entry.Versions))
 	for _, v := range entry.Versions {
 		if v.Source == "" || v.Source == source {
@@ -755,7 +763,7 @@ func selectVersion(entry dslmapping.ChartEntry, svc map[string]any) dslmapping.V
 // each leaf maps independently per dsl-mappings.yaml). Sub-tree projection
 // would require the values_mapping to declare it, which it doesn't today.
 func digDSL(m map[string]any, dottedPath string) (any, bool) {
-	keys := strings.Split(dottedPath, ".")
+	keys := splitDottedPath(dottedPath)
 	var cur any = m
 	for _, k := range keys {
 		mm, ok := cur.(map[string]any)
@@ -801,8 +809,20 @@ func digDSL(m map[string]any, dottedPath string) (any, bool) {
 // (would have to overwrite to descend), when a list is shorter than the
 // asked index AND the path needs to descend further (vs append at the
 // leaf, which is fine), or when the bracket spec is malformed.
+// splitDottedPath splits a dotted path respecting backslash-escaped dots.
+// "grafana\.ini.auth\.generic_oauth.enabled" → ["grafana.ini", "auth.generic_oauth", "enabled"]
+func splitDottedPath(path string) []string {
+	const placeholder = "\x00"
+	escaped := strings.ReplaceAll(path, `\.`, placeholder)
+	parts := strings.Split(escaped, ".")
+	for i, p := range parts {
+		parts[i] = strings.ReplaceAll(p, placeholder, ".")
+	}
+	return parts
+}
+
 func getAtPath(m map[string]any, dottedPath string) any {
-	keys := strings.Split(dottedPath, ".")
+	keys := splitDottedPath(dottedPath)
 	cur := m
 	for _, k := range keys[:len(keys)-1] {
 		seg, _, _, _ := parsePathSegment(k)
@@ -821,7 +841,7 @@ func getAtPath(m map[string]any, dottedPath string) any {
 }
 
 func setAtPath(m map[string]any, dottedPath string, value any) error {
-	keys := strings.Split(dottedPath, ".")
+	keys := splitDottedPath(dottedPath)
 	if len(keys) == 0 {
 		return fmt.Errorf("empty path")
 	}

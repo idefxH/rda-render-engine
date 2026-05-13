@@ -4,7 +4,10 @@ import (
 	"testing"
 
 	"github.com/idefxH/rda-render-engine/dslmapping"
+	"gopkg.in/yaml.v3"
 )
+
+var yamlUnmarshal = yaml.Unmarshal
 
 // TestPassthroughWinsOverWiring verifies that when a service has a
 // passthrough value AND a dependency wiring targeting the same path,
@@ -370,5 +373,177 @@ func TestConnectionURLComposed(t *testing.T) {
 	expected := "postgresql://myuser:mypass@test-postgresql:5432/mydb"
 	if connURL != expected {
 		t.Errorf("expected %q, got %q", expected, connURL)
+	}
+}
+
+func TestCNPGDerivedValuesInitdbSecret(t *testing.T) {
+	values := map[string]any{
+		"suse-library": map[string]any{
+			"services": []any{
+				map[string]any{
+					"binding": "db",
+					"type":    "cnpg",
+					"enabled": true,
+					"auth": map[string]any{
+						"user": map[string]any{
+							"name":     "app",
+							"password": "dev",
+							"database": "testdb",
+						},
+					},
+				},
+			},
+		},
+	}
+	mappings := &dslmapping.Document{
+		Charts: map[string]dslmapping.ChartEntry{
+			"cnpg": {
+				Versions: []dslmapping.VersionEntry{{
+					Constraint: ">=0.1.0",
+					Service:    dslmapping.ServiceSpec{Host: "{{ .Release.Name }}-cnpg-rw", Port: 5432},
+					ValuesMapping: map[string]string{
+						"auth.user.database": "cnpg.cluster.initdb.database",
+						"auth.user.name":     "cnpg.cluster.initdb.owner",
+					},
+					DerivedValues: []dslmapping.DerivedValue{
+						{
+							Target:   "cnpg.cluster.initdb.secret.name",
+							Template: "{{ .Release.Name }}-{{ .Binding }}-binding",
+						},
+					},
+					BindingSecret: []dslmapping.BindingSecretEntry{
+						{Key: "host", Template: "{{ .Release.Name }}-cnpg-rw"},
+						{Key: "port", Literal: "5432"},
+						{Key: "username", FromDSL: "auth.user.name", Default: "app"},
+						{Key: "password", FromDSL: "auth.user.password"},
+						{Key: "database", FromDSL: "auth.user.database", Default: "app"},
+					},
+				}},
+			},
+		},
+	}
+
+	result, err := ProjectWithStage(values, mappings, "myapp", "")
+	if err != nil {
+		t.Fatalf("projection failed: %v", err)
+	}
+
+	sl, _ := result.Overlay["suse-library"].(map[string]any)
+	cnpg, _ := sl["cnpg"].(map[string]any)
+	cluster, _ := cnpg["cluster"].(map[string]any)
+	initdb, _ := cluster["initdb"].(map[string]any)
+	secret, _ := initdb["secret"].(map[string]any)
+
+	if secret == nil {
+		t.Fatal("initdb.secret not set — CNPG will auto-generate passwords")
+	}
+	if secret["name"] != "myapp-db-binding" {
+		t.Errorf("expected initdb.secret.name=myapp-db-binding, got %v", secret["name"])
+	}
+}
+
+func TestOperatorManagedFieldsParsed(t *testing.T) {
+	yamlData := `
+charts:
+  cnpg:
+    versions:
+      - constraint: ">=0.1.0"
+        operator_managed: true
+        operator_resource: "{{ .Release.Name }}-cloudnative-pg"
+        cr_kind:
+          kind: Cluster
+          api_version: postgresql.cnpg.io/v1
+        pod_selector:
+          cnpg.io/cluster: "{{ .Release.Name }}-cnpg"
+        cr_object: "{{ .Release.Name }}-cnpg:cluster"
+        service:
+          host: "{{ .Release.Name }}-cnpg-rw"
+          port: 5432
+`
+	var doc dslmapping.Document
+	if err := yamlUnmarshal([]byte(yamlData), &doc); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	v := doc.Charts["cnpg"].Versions[0]
+
+	if !v.OperatorManaged {
+		t.Error("OperatorManaged should be true")
+	}
+	if v.CRObject != "{{ .Release.Name }}-cnpg:cluster" {
+		t.Errorf("CRObject = %q", v.CRObject)
+	}
+	if v.PodSelector["cnpg.io/cluster"] != "{{ .Release.Name }}-cnpg" {
+		t.Errorf("PodSelector = %v", v.PodSelector)
+	}
+}
+
+func TestPerServiceChartSource(t *testing.T) {
+	values := map[string]any{
+		"suse-library": map[string]any{
+			"services": []any{
+				map[string]any{
+					"binding": "db",
+					"type":    "postgresql",
+					"enabled": true,
+					"source":  "community",
+					"auth":    map[string]any{"user": map[string]any{"password": "x", "database": "d"}},
+				},
+			},
+		},
+	}
+
+	mappings := &dslmapping.Document{
+		Charts: map[string]dslmapping.ChartEntry{
+			"postgresql": {
+				Versions: []dslmapping.VersionEntry{
+					{
+						Constraint: ">=0.1.0",
+						Source:     "appco",
+						Service:    dslmapping.ServiceSpec{Host: "{{ .Release.Name }}-postgresql", Port: 5432},
+						ValuesMapping: map[string]string{
+							"auth.user.password": "postgresql.auth.password",
+						},
+						BindingSecret: []dslmapping.BindingSecretEntry{
+							{Key: "host", Template: "{{ .Release.Name }}-postgresql"},
+							{Key: "port", Literal: "5432"},
+							{Key: "password", FromDSL: "auth.user.password"},
+						},
+					},
+					{
+						Constraint: ">=0.1.0",
+						Source:     "community",
+						Service:    dslmapping.ServiceSpec{Host: "{{ .Release.Name }}-postgresql", Port: 5432},
+						ValuesMapping: map[string]string{
+							"auth.user.password": "postgresql.primary.auth.password",
+						},
+						BindingSecret: []dslmapping.BindingSecretEntry{
+							{Key: "host", Template: "{{ .Release.Name }}-postgresql"},
+							{Key: "port", Literal: "5432"},
+							{Key: "password", FromDSL: "auth.user.password"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	SetChartSource("appco")
+	defer SetChartSource("")
+
+	result, err := ProjectWithStage(values, mappings, "test", "")
+	if err != nil {
+		t.Fatalf("projection failed: %v", err)
+	}
+
+	sl, _ := result.Overlay["suse-library"].(map[string]any)
+	pg, _ := sl["postgresql"].(map[string]any)
+
+	// Per-service source=community should select the community version
+	// entry (primary.auth.password), not the appco one (auth.password).
+	if _, ok := pg["primary"]; !ok {
+		t.Error("per-service source=community should select community version entry with primary.auth.password path")
+	}
+	if _, ok := pg["auth"]; ok {
+		t.Error("per-service source=community should NOT use appco version entry with auth.password path")
 	}
 }
