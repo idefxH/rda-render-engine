@@ -53,6 +53,9 @@ type ChartEntry struct {
 	Branches      map[string]BranchEntry        `yaml:"branches,omitempty"`
 	Sources       map[string]ChartSourceSpec     `yaml:"sources,omitempty"`
 	Versions      []VersionEntry                `yaml:"versions"`
+	// InfraOnly marks non-DSL infra deps (e.g. cloudnative-pg operator).
+	// Hidden from service catalogue, used only for source switching.
+	InfraOnly     bool                          `yaml:"infra_only,omitempty"`
 }
 
 // VersionEntry is one constraint-matched mapping block.
@@ -92,6 +95,12 @@ type VersionEntry struct {
 	//   .Release.Namespace deploy namespace (project.yaml namespace)
 	//   .Binding           the entry's binding name (services[].binding)
 	//   .Type              the entry's chart type (services[].type)
+	//   .ChartAlias        the resolved alias (multi-instance: <type>-<binding>)
+	//   .Domain            suse-library.domain value
+	//   .ChartSource       resolved chart source ("appco" or "community").
+	//                      Per-service .Service.source wins over project/global.
+	//                      Use to branch on image registry:
+	//                        {{ if eq .ChartSource "appco" }}dp.apps.rancher.io/...{{ else }}ghcr.io/...{{ end }}
 	//
 	// Use:
 	//   - Compute fields whose value depends on other DSL fields (e.g. dex's
@@ -231,6 +240,29 @@ type VersionEntry struct {
 	// produce CRDs (e.g. shared APISIX gateway).
 	ProducesBinding *bool `yaml:"produces_binding,omitempty"`
 
+	// OperatorManaged marks charts whose workloads are created by a
+	// CRD operator rather than directly by helm template. Used by the
+	// Tilt extension to skip k8s_resource(workload=...) registration
+	// (which requires the workload to exist in helm template output)
+	// and instead use extra_pod_selectors to discover operator-created
+	// pods at runtime. Example: CloudNativePG creates PostgreSQL pods
+	// via its Cluster CR — helm template only outputs the CR, not the
+	// pods themselves.
+	OperatorManaged bool `yaml:"operator_managed,omitempty"`
+
+	// PodSelector is a label selector map for discovering operator-created
+	// pods. Used when OperatorManaged=true to pass extra_pod_selectors
+	// to k8s_resource in the Tilt extension.
+	// Example: {"cnpg.io/cluster": "{{ .Release.Name }}-cnpg"}
+	PodSelector map[string]string `yaml:"pod_selector,omitempty"`
+
+	// CRObject is a Tilt object selector for the operator's CR in helm
+	// template output. Format: "name:kind" (e.g.
+	// "{{ .Release.Name }}-cnpg:cluster"). Used by the Tilt extension
+	// to claim the CR object and attach operator-created pods to the
+	// same Tilt resource. Kind is case-insensitive in Tilt.
+	CRObject string `yaml:"cr_object,omitempty"`
+
 	// DatasourceType identifies what kind of datasource this chart
 	// provides (e.g. "prometheus", "loki", "tempo"). Empty when the
 	// chart is not a datasource provider. Used by DO-0002 cross-binding
@@ -342,7 +374,10 @@ func (d *Document) SupportedTypes() []string {
 		return nil
 	}
 	out := make([]string, 0, len(d.Charts))
-	for name := range d.Charts {
+	for name, entry := range d.Charts {
+		if entry.InfraOnly {
+			continue
+		}
 		out = append(out, name)
 	}
 	// Stable order — callers iterate this for help text, error messages.
@@ -718,6 +753,13 @@ type DependencySpec struct {
 	// When empty, the dependency uses standard value-projection wiring
 	// (the DO-0004 Phase 1 behavior).
 	WireType string `yaml:"wire_type,omitempty"`
+
+	// RedirectURIPath is the callback path registered with the OIDC provider
+	// when wire_type is "oidc". The wire command appends this to the consumer's
+	// ingress host to build the redirectURIs entry in the Dex client.
+	// Default (when empty): "/login/generic_oauth"
+	// Example: "/oauth_callback" for MinIO
+	RedirectURIPath string `yaml:"redirect_uri_path,omitempty"`
 
 	// CompatibleVersions is a semver constraint for the dependency chart.
 	// When set, the opportunity comment shows BLOCKED if the existing
