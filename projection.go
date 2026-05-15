@@ -670,6 +670,15 @@ func ProjectWithStage(values map[string]any, mappings *dslmapping.Document, rele
 
 	projectAppFields(suse, suseOut)
 
+	// Grafana INI post-processing: the projection writes
+	// `grafana.grafana\.ini.<section>.<key>` as nested maps (the
+	// escaped-dot path support produces a flat key `grafana.ini`
+	// at the alias level, with section sub-maps below it). The
+	// downstream contract (test scenarios, chart configmap
+	// renderer) expects the value to be an INI-formatted string,
+	// so we serialise here.
+	serializeGrafanaIni(suseOut)
+
 	if len(suseOut) > 0 {
 		res.Overlay["suse-library"] = suseOut
 	}
