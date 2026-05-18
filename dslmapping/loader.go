@@ -767,6 +767,35 @@ type DependencySpec struct {
 	// loud if the dev binds an incompatible version.
 	// Example: ">=0.5.0 <1.0.0"
 	CompatibleVersions string `yaml:"compatible_versions,omitempty"`
+
+	// EnvInject is the consumer chart's dotted path (including chart
+	// prefix) to an env list where this dependency's host/port/credential
+	// fields should be injected as secretKeyRef-backed env vars, with
+	// `$NAME` references substituted into the wiring target paths.
+	//
+	// When set AND the source binding exposes a K8s Secret (either via
+	// `credentials.secretRef`, or via the auto-generated binding-secret
+	// for `provisioning: deploy`), the wiring SKIPS baking literal values
+	// at render time and instead:
+	//   1. Generates env entries on the consumer chart referencing the
+	//      source binding's Secret (one entry per wiring target).
+	//   2. Writes `$RDA_DEP_<DSLFIELD>_<KEY>` (literal string) at each
+	//      wiring target path.
+	//
+	// The consumer chart MUST shell-expand env vars in the config target.
+	// dex does this natively for its config file (since 2.30+). Apps that
+	// don't shell-expand should not set this field.
+	//
+	// Rationale: render-time kubectl reads of `credentials.secretRef`
+	// fail silently when the cluster is unreachable or the secret hasn't
+	// been applied yet, leaving the consumer wired to the chart's
+	// in-cluster default. Env-var-based wiring resolves at pod start
+	// instead — same robustness as workload `${binding:NAME.field}` env
+	// refs (which already use secretKeyRef indirection).
+	//
+	// Example (dex → postgresql state_db):
+	//   env_inject: dex.env
+	EnvInject string `yaml:"env_inject,omitempty"`
 }
 
 // AcceptedTypes returns the list of chart types this dependency accepts.

@@ -81,11 +81,50 @@ func projectDependencies(
 		depBlock := getOrInitMap(chartBlock, refType)
 		depBlock["enabled"] = false
 
+		// env_inject: when the dep declares env_inject AND the source
+		// binding exposes a K8s Secret (secretRef or auto-generated
+		// binding-secret for deploy mode), wire host/port/credentials
+		// via secretKeyRef env vars at the consumer chart's env list,
+		// with `$NAME` references baked at each wiring target. Closes
+		// the kubectl-at-render-time silent-fallback gap that left dex's
+		// state_db wired to the in-cluster default when `provisioning:
+		// connect` was used with a secretRef that hadn't been read at
+		// render time. Same robustness as the workload env block, which
+		// already uses secretKeyRef for `${binding:NAME.field}` refs.
+		envSecretName, envSecretMode := resolveEnvInjectSecret(refSvc, refBindingName, releaseName)
+		useEnvInject := dep.EnvInject != "" && envSecretName != ""
+
 		// Wire values from the referenced binding into the consumer
 		if len(dep.Wiring) > 0 {
 			refBF := bindings[refBindingName]
 			for targetPath, sourcePath := range dep.Wiring {
 				aliasedTarget := AliasedPath(targetPath, chartType, chartAlias)
+
+				// env_inject path: emit secretKeyRef env + $VAR literal
+				// at the target. Falls through to render-time baking for
+				// sentinels that don't map to a secret key (__literal:,
+				// __bootstrap:, __url__/suffix).
+				if useEnvInject {
+					if secretKey, ok := envInjectSecretKey(sourcePath, envSecretMode); ok {
+						envVarName := envVarNameFor(dep.DSLField, secretKey)
+						// Passthrough still wins on the target path.
+						if existing := getAtPath(suseOut, aliasedTarget); existing != nil {
+							trace("phase2", binding, "wiring SKIP", fmt.Sprintf("%s (existing=%v, would-be=$%s)", aliasedTarget, existing, envVarName))
+							continue
+						}
+						if err := setAtPath(suseOut, aliasedTarget, "$"+envVarName); err != nil {
+							return fmt.Errorf("dependency wiring %s.%s -> %s: %w",
+								binding, dep.DSLField, aliasedTarget, err)
+						}
+						envInjectPath := AliasedPath(dep.EnvInject, chartType, chartAlias)
+						if err := appendEnvInjectEntry(suseOut, envInjectPath, envVarName, envSecretName, secretKey); err != nil {
+							return fmt.Errorf("dependency env_inject %s.%s -> %s: %w",
+								binding, dep.DSLField, envInjectPath, err)
+						}
+						continue
+					}
+				}
+
 				var val string
 				switch {
 				case sourcePath == "__host__":
@@ -318,6 +357,132 @@ func ValidateDependencies(
 		}
 	}
 	return nil
+}
+
+// resolveEnvInjectSecret determines the K8s Secret name to source
+// env-inject wiring from, given the source binding's service entry. Returns
+// ("", "") when the source binding doesn't expose a Secret that env-inject
+// can reference (e.g. provisioning: connect with inline credentials).
+//
+// Modes:
+//   - "secretRef": user-provided external Secret (provisioning: connect
+//     with credentials.secretRef). The Secret keys follow the DSL
+//     convention: host, port, username, password, database, etc.
+//   - "deploy": auto-generated binding-secret (<release>-<binding>-binding).
+//     Same key convention by chart-driven binding_secret schema.
+func resolveEnvInjectSecret(refSvc map[string]any, refBindingName, releaseName string) (name, mode string) {
+	if refSvc == nil {
+		return "", ""
+	}
+	prov, _ := refSvc["provisioning"].(string)
+	if prov == "" {
+		prov = "deploy"
+	}
+	// connect mode: only secretRef is env-inject-compatible. Inline/overlay
+	// modes carry the host/port in the values overlay itself, not in a
+	// Secret — env_inject falls back to literal baking for those.
+	if prov == "connect" || prov == "external" || prov == "shared" {
+		ep, _ := refSvc["credentials"].(map[string]any)
+		if ep != nil {
+			if sr, _ := ep["secretRef"].(string); sr != "" {
+				return sr, "secretRef"
+			}
+		}
+		return "", ""
+	}
+	// deploy (or legacy "local"): auto-generated binding-secret.
+	return fmt.Sprintf("%s-%s-binding", releaseName, refBindingName), "deploy"
+}
+
+// envInjectSecretKey maps a wiring source sentinel/path to the
+// binding-secret key it should reference under env_inject mode. Returns
+// ("", false) for sentinels that don't map to a single secret key
+// (__literal:, __bootstrap:, __url__ with suffix) — those keep
+// render-time literal baking.
+//
+// mode is "secretRef" (external) or "deploy" (auto). Both follow the same
+// key convention today; the parameter is kept so future mode-specific
+// keys (e.g. "port_<name>") can branch without API changes.
+func envInjectSecretKey(sourcePath, mode string) (string, bool) {
+	_ = mode
+	switch {
+	case sourcePath == "__host__", sourcePath == "__host_short__":
+		return "host", true
+	case sourcePath == "__port__":
+		return "port", true
+	case sourcePath == "__url__":
+		return "url", true
+	case strings.HasPrefix(sourcePath, "__url__"):
+		// __url__/<suffix> — composed at render time; not a single key.
+		return "", false
+	case strings.HasPrefix(sourcePath, "__binding:"):
+		rest := strings.TrimPrefix(sourcePath, "__binding:")
+		endIdx := strings.Index(rest, "__")
+		if endIdx < 0 {
+			return "", false
+		}
+		suffix := rest[endIdx+2:]
+		if suffix != "" {
+			return "", false
+		}
+		return rest[:endIdx], true
+	case strings.HasPrefix(sourcePath, "__literal:"),
+		strings.HasPrefix(sourcePath, "__bootstrap:"):
+		return "", false
+	default:
+		return dslPathToBindingKey(sourcePath), true
+	}
+}
+
+// envVarNameFor builds a stable env var name for a (dsl_field, secret_key)
+// pair. Example: ("state_db", "host") → "RDA_DEP_STATE_DB_HOST". Same
+// (dsl_field, key) across multiple wiring targets produces the same name,
+// so the env list naturally dedups when iterated by append below.
+func envVarNameFor(dslField, secretKey string) string {
+	upper := func(s string) string {
+		s = strings.ReplaceAll(s, "-", "_")
+		s = strings.ReplaceAll(s, ".", "_")
+		return strings.ToUpper(s)
+	}
+	return fmt.Sprintf("RDA_DEP_%s_%s", upper(dslField), upper(secretKey))
+}
+
+// appendEnvInjectEntry adds a `{name, valueFrom: {secretKeyRef: {name,
+// key}}}` entry to the list at envInjectPath in suseOut. Idempotent on
+// (varName): a second call with the same varName is a no-op (the env list
+// already references that secret key). Creates the list if missing.
+func appendEnvInjectEntry(suseOut map[string]any, envInjectPath, varName, secretName, secretKey string) error {
+	existing := getAtPath(suseOut, envInjectPath)
+	var list []any
+	switch v := existing.(type) {
+	case nil:
+		// new list
+	case []any:
+		list = v
+		for _, item := range list {
+			m, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			if n, _ := m["name"].(string); n == varName {
+				// already injected by a sibling target
+				return nil
+			}
+		}
+	default:
+		return fmt.Errorf("env_inject target %s is not a list (got %T)", envInjectPath, existing)
+	}
+	entry := map[string]any{
+		"name": varName,
+		"valueFrom": map[string]any{
+			"secretKeyRef": map[string]any{
+				"name": secretName,
+				"key":  secretKey,
+			},
+		},
+	}
+	list = append(list, entry)
+	return setAtPath(suseOut, envInjectPath, list)
 }
 
 // dslPathToBindingKey maps DSL wiring source paths to binding-secret
