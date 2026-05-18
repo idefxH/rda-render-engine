@@ -237,30 +237,36 @@ func TestProjectDependencies_EnvInject_SecretRef(t *testing.T) {
 
 	// Every fetchable wiring target should land as $RDA_DEP_STATE_DB_<KEY>
 	// — NOT the in-cluster fallback values.
-	want := map[string]string{
+	// Exception: __port__ bypasses env_inject (charts like Dex require
+	// an integer, not a $VAR string) and is resolved at render time.
+	wantString := map[string]string{
 		"dex.config.storage.config.host":     "$RDA_DEP_STATE_DB_HOST",
-		"dex.config.storage.config.port":     "$RDA_DEP_STATE_DB_PORT",
 		"dex.config.storage.config.user":     "$RDA_DEP_STATE_DB_USERNAME",
 		"dex.config.storage.config.password": "$RDA_DEP_STATE_DB_PASSWORD",
 		"dex.config.storage.config.database": "$RDA_DEP_STATE_DB_DATABASE",
 	}
-	for path, expect := range want {
+	for path, expect := range wantString {
 		got, _ := digPath(suseOut, path)
 		if got != expect {
 			t.Errorf("%s = %v; want %q", path, got, expect)
 		}
 	}
+	// Port is resolved as integer at render time, not via env_inject.
+	portRaw, _ := digPath(suseOut, "dex.config.storage.config.port")
+	if portRaw != 5432 {
+		t.Errorf("dex.config.storage.config.port = %v (%T); want integer 5432", portRaw, portRaw)
+	}
 
 	// dex.env list must reference the EXTERNAL secret name (shared-pg),
-	// not the auto-generated `<release>-<binding>-binding` name. Each
-	// wiring target with a known secret key produces one entry.
+	// not the auto-generated `<release>-<binding>-binding` name.
+	// Port is excluded (resolved as integer, not via secretKeyRef).
 	envRaw, _ := digPath(suseOut, "dex.env")
 	envList, ok := envRaw.([]any)
 	if !ok {
 		t.Fatalf("dex.env not a list: %T", envRaw)
 	}
-	if len(envList) != 5 {
-		t.Fatalf("expected 5 dex.env entries (host, port, username, password, database), got %d: %v",
+	if len(envList) != 4 {
+		t.Fatalf("expected 4 dex.env entries (host, username, password, database), got %d: %v",
 			len(envList), envList)
 	}
 	for _, raw := range envList {

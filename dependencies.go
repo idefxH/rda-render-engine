@@ -437,7 +437,10 @@ func envInjectSecretKey(sourcePath, mode string) (string, bool) {
 	case sourcePath == "__host__", sourcePath == "__host_short__":
 		return "host", true
 	case sourcePath == "__port__":
-		return "port", true
+		// Port must be an integer in most chart configs (e.g. Dex uint16).
+		// env_inject emits a $VAR string which cannot be unmarshaled as int.
+		// Always resolve __port__ at render time via BindingFields instead.
+		return "", false
 	case sourcePath == "__url__":
 		return "url", true
 	case strings.HasPrefix(sourcePath, "__url__"):
