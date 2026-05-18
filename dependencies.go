@@ -430,6 +430,20 @@ func envInjectSecretKey(sourcePath, mode string) (string, bool) {
 		strings.HasPrefix(sourcePath, "__bootstrap:"):
 		return "", false
 	default:
+		// Numeric literal values (e.g. port: 5432 written directly in
+		// wiring) are not DSL paths and have no binding-secret key.
+		// Fall back to render-time literal baking instead of attempting
+		// a secretKeyRef that doesn't exist.
+		allDigits := true
+		for _, c := range sourcePath {
+			if c < '0' || c > '9' {
+				allDigits = false
+				break
+			}
+		}
+		if allDigits && sourcePath != "" {
+			return "", false
+		}
 		return dslPathToBindingKey(sourcePath), true
 	}
 }
