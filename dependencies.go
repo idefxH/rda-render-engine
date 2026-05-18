@@ -2,6 +2,7 @@ package render
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/idefxH/rda-render-engine/dslmapping"
@@ -97,7 +98,13 @@ func projectDependencies(
 		// Wire values from the referenced binding into the consumer
 		if len(dep.Wiring) > 0 {
 			refBF := bindings[refBindingName]
-			for targetPath, sourcePath := range dep.Wiring {
+			wiringKeys := make([]string, 0, len(dep.Wiring))
+			for k := range dep.Wiring {
+				wiringKeys = append(wiringKeys, k)
+			}
+			sort.Strings(wiringKeys)
+			for _, targetPath := range wiringKeys {
+				sourcePath := dep.Wiring[targetPath]
 				aliasedTarget := AliasedPath(targetPath, chartType, chartAlias)
 
 				// env_inject path: emit secretKeyRef env + $VAR literal
