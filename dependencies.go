@@ -125,6 +125,27 @@ func projectDependencies(
 					}
 				}
 
+				// Numeric literal: write directly as integer (e.g. port: 5432).
+				// This is the same path as __port__ but for hardcoded values.
+				{
+					allDigits := sourcePath != ""
+					for _, c := range sourcePath {
+						if c < '0' || c > '9' {
+							allDigits = false
+							break
+						}
+					}
+					if allDigits {
+						var intVal int
+						fmt.Sscanf(sourcePath, "%d", &intVal)
+						if err := setAtPath(suseOut, aliasedTarget, intVal); err != nil {
+							return fmt.Errorf("dependency wiring %s.%s -> %s: %w",
+								binding, dep.DSLField, aliasedTarget, err)
+						}
+						continue
+					}
+				}
+
 				var val string
 				switch {
 				case sourcePath == "__host__":
